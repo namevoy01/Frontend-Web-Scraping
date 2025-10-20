@@ -159,40 +159,6 @@
             "timestamp": "2025-10-17T06:51:06.453Z"
           }
         ]
-      },
-      {
-        "groupName": "คราฟเบียร์ไทยและสุราก้าวหน้า",
-        "groupUrl": "https://www.facebook.com/groups/788158899526864/",
-        "scrapedAt": "2025-10-17T06:59:46.967Z",
-        "totalPosts": 8,
-        "beerRelatedPosts": 1,
-        "statistics": {
-          "withContact": 0,
-          "completenessRate": 0
-        },
-        "posts": [
-          {
-            "author": "Unknown",
-            "authorProfileLink": "https://www.facebook.com/groups/788158899526864/user/1550400641/",
-            "text": "ร้านนี้ส่งจริง มีรีวิวการันตีครับ กรณีที่ของมีปัญหาจากการขนส่งพร้อมเคลมต้นใหม่ให้ฟรี ทุกท่านมั่นใจได้ครับ",
-            "postLink": "https://www.facebook.com/groups/788158899526864/posts/1266133308396085/?__cft__[0]=AZUmwS7SFVsFTUibqAxwgQzPSaubXqidvb82DVExCwVGwFm_De0LahVkWi_ZOMzsnbDQ-ZkGAqBbDvAg6M728F2SnFVgS-d7USEMU80MJApuz-rOUJydDtk7BgbhB-peCZRxHWCbbqiIPNIAd31l4fLvdqQ99z3ERhFLo8mVN-43AIClFhLogsm2m9-2I4_jkRwswKwKpUTIIDV1_nNhcYP3K-IeGDbfi1mxXkKe9UqV2A&__tn__=%2CO%2CP-R",
-            "imageUrl": "https://scontent.fbkk5-3.fna.fbcdn.net/v/t39.30808-6/521953090_608482402309154_5638180509367070211_n.jpg?stp=dst-jpg_p960x960_tt6&_nc_cat=111&ccb=1-7&_nc_sid=833d8c&_nc_ohc=nQA3to3di88Q7kNvwFpnnZV&_nc_oc=Adlu1udPMxiB5wq01wTaCFPygd2OCwMibeXai2g-vT6Ec_iur7c4AFAm24_15mMCUk0&_nc_zt=23&_nc_ht=scontent.fbkk5-3.fna&_nc_gid=6PEPR5YgBpjfrOd1ORpxPw&oh=00_Afctku9paEhuWJmeIRH722uZSsS_XTBkSX8jc6Ux2gETGw&oe=68F7AFF2",
-            "postTime": "ไม่ระบุ",
-            "rawTimestamp": "2025-10-17T06:55:55.927Z",
-            "contact": {
-              "phones": [],
-              "lineIds": [],
-              "hasContact": false
-            },
-            "productInfo": {
-              "prices": [],
-              "beerBrands": [],
-              "locations": [],
-              "deliveryMethods": []
-            },
-            "timestamp": "2025-10-17T06:55:55.928Z"
-          }
-        ]
       }
     ],
     "failedGroups": []
