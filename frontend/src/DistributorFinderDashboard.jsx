@@ -18,6 +18,7 @@ export default function DistributorFinderDashboard() {
   const [filteredSuggestions, setFilteredSuggestions] = useState([]); // รายการ suggestions ที่กรองแล้ว
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1); // index ของ suggestion ที่เลือก
   const [selectedCategory, setSelectedCategory] = useState(''); // category ที่เลือกสำหรับกรอง
+  const [postFilter, setPostFilter] = useState(''); // กรองโพสต์เพิ่มเติม
 
   const SAVED_QUERIES_KEY = 'distributorSavedSearchTerms';
   const SINGLE_SEARCH_KEY = 'distributorSearchTerm';
@@ -164,9 +165,16 @@ export default function DistributorFinderDashboard() {
     }
 
     const term = (searchTerm || '').trim();
+    const filter = (postFilter || '').trim();
+    
+    // 🔹 Validation: ต้องใส่ทั้งคำค้นหาและกรองโพสต์
     if (!term) {
-      setResults(allResults);
-      setShowResults(true);
+      alert('กรุณาใส่คำค้นหา');
+      return;
+    }
+    
+    if (!filter) {
+      alert('กรุณาใส่คำกรองโพสต์');
       return;
     }
 
@@ -189,12 +197,42 @@ export default function DistributorFinderDashboard() {
     setResults(formatted);
     setShowResults(true);
 
-    // 🔹 ส่ง API ไปที่ http://localhost:4000/:query และ http://localhost:3001/search ในพื้นหลัง
+    // 🔹 ส่ง API ไปที่ http://localhost:4000/:query และ http://localhost:3001/findgroup ในพื้นหลัง
     setSearchLoading(true);
     console.log('🔍 Starting search for:', term);
     
+    // 🔹 ส่ง API 3001 ทันที (ไม่รอ API 4000)
+    const groupParam = term; // searchTerm
+    const queryParam = postFilter || ''; // postFilter
+    const api3001Url = `http://localhost:3001/findgroup?group=${encodeURIComponent(groupParam)}&query=${encodeURIComponent(queryParam)}`;
+    console.log('🚀 Sending search to localhost:3001/findgroup');
+    console.log('📋 Group (searchTerm):', groupParam);
+    console.log('📋 Query (postFilter):', queryParam);
+    console.log('🔗 Full URL:', api3001Url);
+    const searchApiPromise = fetch(api3001Url)
+      .then(searchResp => {
+        console.log('📡 Search API response status:', searchResp.status);
+        if (searchResp.ok) {
+          return searchResp.json();
+        } else {
+          console.log('⚠️ Search API failed:', searchResp.status);
+          return null;
+        }
+      })
+      .then(searchData => {
+        if (searchData) {
+          console.log('✅ Search API response (background):', searchData);
+          // สามารถเพิ่มข้อมูลจาก search API ได้ที่นี่ถ้าต้องการ
+        }
+      })
+      .catch(searchError => {
+        console.log('⚠️ Search API CORS error (background):', searchError.message);
+        console.log('ℹ️ Background search failed, but main results are already shown');
+      });
+    
     try {
-      // 🔹 เรียก API 4000 ก่อน (หลัก)
+      // 🔹 เรียก API 4000 (หลัก)
+      console.log('🚀 Sending search to localhost:4000 with query:', term);
       const postsResp = await fetch(`http://localhost:4000/${encodeURIComponent(term)}`);
       
       if (postsResp.ok) {
@@ -253,43 +291,25 @@ export default function DistributorFinderDashboard() {
         }
         
         console.log('✅ Search completed successfully with', formatted.length, 'results');
-        
-        // 🔹 ส่ง API 3001 และรอให้เสร็จก่อนค่อยเปิดปุ่ม
-        fetch(`http://localhost:3001/search?q=${encodeURIComponent(term)}`)
-          .then(searchResp => {
-            if (searchResp.ok) {
-              return searchResp.json();
-            } else {
-              console.log('⚠️ Search API failed:', searchResp.status);
-              return null;
-            }
-          })
-          .then(searchData => {
-            if (searchData) {
-              console.log('✅ Search API response (background):', searchData);
-              // สามารถเพิ่มข้อมูลจาก search API ได้ที่นี่ถ้าต้องการ
-            }
-          })
-          .catch(searchError => {
-            console.log('⚠️ Search API CORS error (background):', searchError.message);
-            console.log('ℹ️ Background search failed, but main results are already shown');
-          })
-          .finally(() => {
-            // 🔹 เปิดปุ่มให้กดได้ใหม่หลังจาก API 3001 เสร็จ
-            setSearchLoading(false);
-            console.log('✅ All APIs completed, button re-enabled');
-          });
       } else {
         console.log('⚠️ Posts API ส่งคืนสถานะ: ' + postsResp.status);
         console.log('❌ Posts API failed, no data to show');
-        setSearchLoading(false);
-        console.log('✅ Search completed with API error, button re-enabled');
       }
     } catch (e) {
-      console.log('⚠️ API failed:', e.message);
+      console.log('⚠️ Posts API failed:', e.message);
       // ไม่แสดง error ให้ผู้ใช้ เพราะข้อมูลหลักแสดงแล้ว
+    }
+    
+    // 🔹 รอให้ API 3001 เสร็จก่อนค่อยเปิดปุ่ม
+    try {
+      await searchApiPromise;
+      console.log('✅ Search API 3001 completed');
+    } catch (e) {
+      console.log('⚠️ Search API 3001 error:', e.message);
+    } finally {
+      // 🔹 เปิดปุ่มให้กดได้ใหม่หลังจาก API ทั้งหมดเสร็จ
       setSearchLoading(false);
-      console.log('✅ Search completed with error, button re-enabled');
+      console.log('✅ All APIs completed, button re-enabled');
     }
   };
 
@@ -479,73 +499,106 @@ export default function DistributorFinderDashboard() {
           )}
 
 
-          <div className="flex flex-col gap-3 mb-4">
-            <div className="flex gap-4 items-center relative">
-              <div className="flex-1 relative">
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  onFocus={handleInputFocus}
-                  onBlur={handleInputBlur}
-                  placeholder="พิมพ์ข้อความที่นี่..."
-                  className="w-full bg-blue-50 border-2 border-blue-200 text-blue-900 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                
-                {/* Auto Complete Suggestions */}
-                {showSuggestions && filteredSuggestions.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 bg-white border-2 border-blue-200 rounded-xl shadow-lg z-50 mt-1 max-h-60 overflow-y-auto">
-                    {filteredSuggestions.map((suggestion, index) => (
-                      <div
-                        key={suggestion}
-                        onClick={() => handleSuggestionClick(suggestion)}
-                        className={`px-4 py-3 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors ${
-                          index === selectedSuggestionIndex
-                            ? 'bg-blue-100 text-blue-900'
-                            : 'hover:bg-blue-50 text-blue-800'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-2">
-                          <Search className="w-4 h-4 text-blue-500" />
-                          <span>{suggestion}</span>
-                        </div>
+          <div className="flex flex-col gap-4 mb-4">
+            {/* Search and Post Filter Group */}
+            <div className="bg-blue-50 rounded-xl p-4 border-2 border-blue-200">
+              <h3 className="text-blue-800 font-medium mb-3">ค้นหาและกรอง</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Search Input */}
+                <div className="flex flex-col gap-2">
+                  <label className="text-blue-800 text-sm font-medium">ค้นหากลุ่ม *</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      onFocus={handleInputFocus}
+                      onBlur={handleInputBlur}
+                      placeholder="พิมพ์ข้อความที่นี่..."
+                      className={`w-full bg-white border-2 text-blue-900 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                        !searchTerm.trim() ? 'border-red-300' : 'border-blue-200'
+                      }`}
+                    />
+                    
+                    {/* Auto Complete Suggestions */}
+                    {showSuggestions && filteredSuggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 bg-white border-2 border-blue-200 rounded-xl shadow-lg z-50 mt-1 max-h-60 overflow-y-auto">
+                        {filteredSuggestions.map((suggestion, index) => (
+                          <div
+                            key={suggestion}
+                            onClick={() => handleSuggestionClick(suggestion)}
+                            className={`px-4 py-3 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors ${
+                              index === selectedSuggestionIndex
+                                ? 'bg-blue-100 text-blue-900'
+                                : 'hover:bg-blue-50 text-blue-800'
+                            }`}
+                          >
+                            <div className="flex items-center space-x-2">
+                              <Search className="w-4 h-4 text-blue-500" />
+                              <span>{suggestion}</span>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
                   </div>
-                )}
+                  {!searchTerm.trim() && (
+                    <p className="text-red-500 text-xs">กรุณาใส่คำค้นหา</p>
+                  )}
+                </div>
+                
+                {/* Post Filter Input */}
+                <div className="flex flex-col gap-2">
+                  <label className="text-blue-800 text-sm font-medium">กรองโพสต์ *</label>
+                  <input
+                    type="text"
+                    value={postFilter}
+                    onChange={(e) => setPostFilter(e.target.value)}
+                    placeholder="พิมพ์คำกรองโพสต์..."
+                    className={`w-full bg-white border-2 text-blue-900 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      !postFilter.trim() ? 'border-red-300' : 'border-blue-200'
+                    }`}
+                  />
+                  {!postFilter.trim() && (
+                    <p className="text-red-500 text-xs">กรุณาใส่คำกรองโพสต์</p>
+                  )}
+                </div>
               </div>
               
-              <button
-                onClick={handleSearch}
-                disabled={searchLoading}
-                className={`px-6 py-3 rounded-xl shadow-md transition-all flex items-center space-x-2 ${
-                  searchLoading 
-                    ? 'bg-gray-400 cursor-not-allowed' 
-                    : 'bg-gradient-to-r from-blue-600 to-blue-700 hover:shadow-lg'
-                } text-white`}
-              >
-                {searchLoading ? (
-                  <>
-                    <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
-                    <span>กำลังส่ง...</span>
-                  </>
-                ) : (
-                  <>
-                    <Search className="w-4 h-4" />
-                    <span>ค้นหา</span>
-                  </>
-                )}
-              </button>
+              {/* Search Button */}
+              <div className="flex justify-center mt-4">
+                <button
+                  onClick={handleSearch}
+                  disabled={searchLoading || !searchTerm.trim() || !postFilter.trim()}
+                  className={`px-8 py-3 rounded-xl shadow-md transition-all flex items-center space-x-2 ${
+                    searchLoading || !searchTerm.trim() || !postFilter.trim()
+                      ? 'bg-gray-400 cursor-not-allowed' 
+                      : 'bg-gradient-to-r from-blue-600 to-blue-700 hover:shadow-lg'
+                  } text-white`}
+                >
+                  {searchLoading ? (
+                    <>
+                      <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+                      <span>กำลังส่ง...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Search className="w-4 h-4" />
+                      <span>ค้นหา</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
             
             {/* Category Filter */}
-            <div className="flex gap-3 items-center">
-              <label className="text-blue-800 text-sm font-medium">กรองตามหมวดหมู่:</label>
+            <div className="flex flex-col gap-2">
+              <label className="text-blue-800 text-sm font-medium">กรองตามหมวดหมู่</label>
               <select
                 value={selectedCategory}
                 onChange={handleCategoryChange}
-                className="bg-blue-50 border-2 border-blue-200 text-blue-900 rounded-xl px-3 py-2 min-w-[200px] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="bg-blue-50 border-2 border-blue-200 text-blue-900 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 {CATEGORY_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
