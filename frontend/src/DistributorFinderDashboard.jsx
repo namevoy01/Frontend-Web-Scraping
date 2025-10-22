@@ -9,14 +9,31 @@ export default function DistributorFinderDashboard() {
   const [results, setResults] = useState([]);
   const [allResults, setAllResults] = useState([]); // เก็บข้อมูลทั้งหมด
   const [showResults, setShowResults] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [latestScrapedAt, setLatestScrapedAt] = useState(null);
   const [savedQueries, setSavedQueries] = useState([]); // รายการค้นหาที่บันทึกไว้
+  const [searchLoading, setSearchLoading] = useState(false); // สถานะ loading ของปุ่มค้นหา
+  const [showSuggestions, setShowSuggestions] = useState(false); // แสดง/ซ่อน suggestions
+  const [filteredSuggestions, setFilteredSuggestions] = useState([]); // รายการ suggestions ที่กรองแล้ว
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1); // index ของ suggestion ที่เลือก
+  const [selectedCategory, setSelectedCategory] = useState(''); // category ที่เลือกสำหรับกรอง
 
   const SAVED_QUERIES_KEY = 'distributorSavedSearchTerms';
   const SINGLE_SEARCH_KEY = 'distributorSearchTerm';
   const MAX_SAVED = 10;
+
+  // 🔹 Category options
+  const CATEGORY_OPTIONS = [
+    { value: '', label: '— เลือกหมวดหมู่ —' },
+    { value: 'beer', label: 'เบียร์' },
+    { value: 'brands', label: 'ยี่ห้อ' },
+    { value: 'distributor', label: 'ตัวแทนจำหน่าย' },
+    { value: 'selling', label: 'ขาย' },
+    { value: 'delivery', label: 'จัดส่ง' },
+    { value: 'price', label: 'ราคา' },
+    { value: 'contact', label: 'ติดต่อ' }
+  ];
 
   const readSavedQueries = () => {
     try {
@@ -49,21 +66,42 @@ export default function DistributorFinderDashboard() {
     );
   };
 
-  // 🔹 ดึงข้อมูลจาก localStorage (เฉพาะรายการประวัติ) และ API เมื่อเริ่มต้น
+  // 🔹 Helper: ตรวจสอบว่าโพสต์ตรงกับ category หรือไม่
+  const matchesCategory = (post, category) => {
+    if (!category) return true;
+    return post.keywords?.some(k => k?.category === category);
+  };
+
+  // 🔹 ดึงข้อมูลจาก localStorage (เฉพาะรายการประวัติ) เมื่อเริ่มต้น
   useEffect(() => {
     const initialSaved = readSavedQueries();
     setSavedQueries(initialSaved);
-    
-    // โหลดข้อมูลจาก API ทันทีเมื่อเข้าเว็บ
-    fetchData();
   }, []);
 
+  // 🔹 Auto complete logic
+  useEffect(() => {
+    if (searchTerm.trim() === '') {
+      setFilteredSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    const filtered = savedQueries.filter(query => 
+      query.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    
+    setFilteredSuggestions(filtered);
+    setShowSuggestions(filtered.length > 0);
+    setSelectedSuggestionIndex(-1);
+  }, [searchTerm, savedQueries]);
+
   // 🔹 ดึงข้อมูลจาก API
-  const fetchData = async () => {
+  const fetchData = async (query = '') => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('http://localhost:4000/posts');
+      const url = query ? `http://localhost:4000/${encodeURIComponent(query)}` : 'http://localhost:4000/posts';
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -119,6 +157,12 @@ export default function DistributorFinderDashboard() {
   };
 
   const handleSearch = async () => {
+    // 🔹 ป้องกันการกดปุ่มซ้ำ
+    if (searchLoading) {
+      console.log('⚠️ Search is already in progress, please wait...');
+      return;
+    }
+
     const term = (searchTerm || '').trim();
     if (!term) {
       setResults(allResults);
@@ -129,76 +173,202 @@ export default function DistributorFinderDashboard() {
     // 🔹 บันทึก search term ลง localStorage (แต่ไม่อ่านค่าจาก storage มาใช้)
     persistQueryIfNeeded(term);
 
-    // 🔹 เรียกทั้ง 2 API พร้อมกัน: ค้นหา (3001) และโพสต์ (4000)
-    const searchUrl = `http://localhost:3001/search?q=${encodeURIComponent(term)}`;
-    const postsUrl = 'http://localhost:4000/posts';
+    // 🔹 แสดงผลลัพธ์จากข้อมูลที่มีอยู่ก่อน (กรองจาก allResults)
+    const searchLower = term.toLowerCase();
+    const filtered = allResults.filter(result => 
+      matchesSearch(result, searchLower) && matchesCategory(result, selectedCategory)
+    );
+    const formatted = filtered
+      .map((p, index) => ({ id: index + 1, ...p }))
+      .sort((a, b) => {
+        const timeA = new Date(a.groupScrapedAt || a.timestamp || a.rawTimestamp || 0).getTime();
+        const timeB = new Date(b.groupScrapedAt || b.timestamp || b.rawTimestamp || 0).getTime();
+        return timeB - timeA;
+      });
 
+    setResults(formatted);
+    setShowResults(true);
+
+    // 🔹 ส่ง API ไปที่ http://localhost:4000/:query และ http://localhost:3001/search ในพื้นหลัง
+    setSearchLoading(true);
+    console.log('🔍 Starting search for:', term);
+    
     try {
-      const [searchResp, postsResp] = await Promise.all([
-        fetch(searchUrl),
-        fetch(postsUrl)
-      ]);
+      // 🔹 เรียก API 4000 ก่อน (หลัก)
+      const postsResp = await fetch(`http://localhost:4000/${encodeURIComponent(term)}`);
+      
+      if (postsResp.ok) {
+        const postsData = await postsResp.json();
+        console.log('✅ Posts API response:', postsData);
+        console.log('📊 Posts API groups count:', postsData.groups?.length || 0);
+        console.log('📊 Posts API total posts:', postsData.summary?.totalPosts || 0);
+        
+        // 🔹 รวมข้อมูลจาก posts API
+        const parseGroupsToPosts = (root) => {
+          const groups = Array.isArray(root?.groups) ? root.groups : [];
+          console.log('🔍 Processing groups:', groups.length);
+          
+          return groups.flatMap((group) => {
+            const groupScrapedAt = group.scrapedAt || group.lastUpdated || root.scrapedAt || null;
+            const posts = Array.isArray(group.posts) ? group.posts : [];
+            console.log(`📝 Group "${group.groupName}" has ${posts.length} posts`);
+            
+            return posts.map((post) => ({ ...post, groupScrapedAt, rootQuery: root.query }));
+          });
+        };
 
-      if (!searchResp.ok) throw new Error(`Search API error ${searchResp.status}`);
-      if (!postsResp.ok) throw new Error(`Posts API error ${postsResp.status}`);
+        const postsFromAPI = parseGroupsToPosts(postsData);
+        console.log('📋 Posts from API:', postsFromAPI.length);
+        
+        // 🔹 ล้างข้อมูลเก่าและใช้ข้อมูลใหม่จาก API 4000 เท่านั้น
+        console.log('🧹 Clearing old data and using new data from API 4000');
+        console.log('📊 Old allResults:', allResults.length);
+        console.log('📊 New posts from API:', postsFromAPI.length);
 
-      const [searchData, postsData] = await Promise.all([
-        searchResp.json(),
-        postsResp.json()
-      ]);
+        // 🔹 อัปเดตข้อมูลทั้งหมดด้วยข้อมูลใหม่เท่านั้น
+        setAllResults(postsFromAPI);
+        
+        // 🔹 กรองผลลัพธ์ใหม่ด้วยคำค้นและ category
+        const searchLower = term.toLowerCase();
+        const filtered = postsFromAPI.filter(result => 
+          matchesSearch(result, searchLower) && matchesCategory(result, selectedCategory)
+        );
+        console.log('🔍 Filtered results:', filtered.length);
+        
+        const formatted = filtered
+          .map((p, index) => ({ id: index + 1, ...p }))
+          .sort((a, b) => {
+            const timeA = new Date(a.groupScrapedAt || a.timestamp || a.rawTimestamp || 0).getTime();
+            const timeB = new Date(b.groupScrapedAt || b.timestamp || b.rawTimestamp || 0).getTime();
+            return timeB - timeA;
+          });
 
-      const parseGroupsToPosts = (root) => {
-        const groups = Array.isArray(root?.groups) ? root.groups : [];
-        return groups.flatMap((group) => {
-          const groupScrapedAt = group.scrapedAt || group.lastUpdated || root.scrapedAt || null;
-          const posts = Array.isArray(group.posts) ? group.posts : [];
-          return posts.map((post) => ({ ...post, groupScrapedAt }));
-        });
-      };
-
-      const searchPosts = parseGroupsToPosts(searchData);
-      const basePosts = parseGroupsToPosts(postsData);
-
-      // 🔹 รวมและลบซ้ำ โดยใช้ postLink เป็น key ถ้ามี ไม่งั้นใช้ author+text
-      const seen = new Set();
-      const merged = [];
-      const pushUnique = (p) => {
-        const key = p.postLink || `${p.author || ''}::${(p.text || '').slice(0,100)}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          merged.push(p);
+        console.log('📋 Final formatted results:', formatted.length);
+        setResults(formatted);
+        setShowResults(true);
+        
+        // 🔹 อัปเดตเวลาล่าสุด
+        if (postsData.scrapedAt) {
+          setLatestScrapedAt(postsData.scrapedAt);
         }
-      };
-      basePosts.forEach(pushUnique);
-      searchPosts.forEach(pushUnique);
-
-      // 🔹 กรองผลรวมอีกครั้งด้วยคำค้นที่ผู้ใช้ใส่ เพื่อให้แสดงเฉพาะที่ตรงจริงๆ
-      const searchLower = term.toLowerCase();
-      const filteredMerged = merged.filter(p => matchesSearch(p, searchLower));
-
-      const formatted = filteredMerged
-        .map((p, index) => ({ id: index + 1, ...p }))
-        .sort((a, b) => {
-          const timeA = new Date(a.groupScrapedAt || a.timestamp || a.rawTimestamp || 0).getTime();
-          const timeB = new Date(b.groupScrapedAt || b.timestamp || b.rawTimestamp || 0).getTime();
-          return timeB - timeA;
-        });
-
-      setResults(formatted);
-      setShowResults(true);
+        
+        console.log('✅ Search completed successfully with', formatted.length, 'results');
+        
+        // 🔹 ส่ง API 3001 และรอให้เสร็จก่อนค่อยเปิดปุ่ม
+        fetch(`http://localhost:3001/search?q=${encodeURIComponent(term)}`)
+          .then(searchResp => {
+            if (searchResp.ok) {
+              return searchResp.json();
+            } else {
+              console.log('⚠️ Search API failed:', searchResp.status);
+              return null;
+            }
+          })
+          .then(searchData => {
+            if (searchData) {
+              console.log('✅ Search API response (background):', searchData);
+              // สามารถเพิ่มข้อมูลจาก search API ได้ที่นี่ถ้าต้องการ
+            }
+          })
+          .catch(searchError => {
+            console.log('⚠️ Search API CORS error (background):', searchError.message);
+            console.log('ℹ️ Background search failed, but main results are already shown');
+          })
+          .finally(() => {
+            // 🔹 เปิดปุ่มให้กดได้ใหม่หลังจาก API 3001 เสร็จ
+            setSearchLoading(false);
+            console.log('✅ All APIs completed, button re-enabled');
+          });
+      } else {
+        console.log('⚠️ Posts API ส่งคืนสถานะ: ' + postsResp.status);
+        console.log('❌ Posts API failed, no data to show');
+        setSearchLoading(false);
+        console.log('✅ Search completed with API error, button re-enabled');
+      }
     } catch (e) {
-      // ถ้า API ใดๆ ล้มเหลว ให้ถอยไปกรองข้อมูลภายในหน้า
-      const searchLower = term.toLowerCase();
-      const filtered = allResults.filter(result => matchesSearch(result, searchLower));
-      setResults(filtered);
-      setShowResults(true);
+      console.log('⚠️ API failed:', e.message);
+      // ไม่แสดง error ให้ผู้ใช้ เพราะข้อมูลหลักแสดงแล้ว
+      setSearchLoading(false);
+      console.log('✅ Search completed with error, button re-enabled');
     }
   };
 
-  const handleSelectSaved = (e) => {
-    const value = e.target.value;
-    // เลือกจากประวัติ: ตั้งค่าในช่องค้นหาเฉยๆ ไม่ค้นหาอัตโนมัติ และไม่เขียน storage
-    setSearchTerm(value);
+
+  // 🔹 Handle keyboard navigation for auto complete
+  const handleKeyDown = (e) => {
+    if (!showSuggestions) return;
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setSelectedSuggestionIndex(prev => 
+          prev < filteredSuggestions.length - 1 ? prev + 1 : prev
+        );
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setSelectedSuggestionIndex(prev => prev > 0 ? prev - 1 : -1);
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < filteredSuggestions.length) {
+          setSearchTerm(filteredSuggestions[selectedSuggestionIndex]);
+          setShowSuggestions(false);
+          handleSearch();
+        } else {
+          handleSearch();
+        }
+        break;
+      case 'Escape':
+        setShowSuggestions(false);
+        setSelectedSuggestionIndex(-1);
+        break;
+    }
+  };
+
+  // 🔹 Handle suggestion click
+  const handleSuggestionClick = (suggestion) => {
+    setSearchTerm(suggestion);
+    setShowSuggestions(false);
+    setSelectedSuggestionIndex(-1);
+  };
+
+  // 🔹 Handle input focus - แสดง suggestions ทันทีเมื่อ focus
+  const handleInputFocus = () => {
+    if (savedQueries.length > 0) {
+      setFilteredSuggestions(savedQueries);
+      setShowSuggestions(true);
+    }
+  };
+
+  // 🔹 Handle input blur (with delay to allow clicks)
+  const handleInputBlur = () => {
+    setTimeout(() => {
+      setShowSuggestions(false);
+      setSelectedSuggestionIndex(-1);
+    }, 200);
+  };
+
+  // 🔹 Handle category change
+  const handleCategoryChange = (e) => {
+    const category = e.target.value;
+    setSelectedCategory(category);
+    
+    // กรองผลลัพธ์ใหม่ทันที
+    const searchLower = searchTerm.toLowerCase();
+    const filtered = allResults.filter(result => 
+      matchesSearch(result, searchLower) && matchesCategory(result, category)
+    );
+    const formatted = filtered
+      .map((p, index) => ({ id: index + 1, ...p }))
+      .sort((a, b) => {
+        const timeA = new Date(a.groupScrapedAt || a.timestamp || a.rawTimestamp || 0).getTime();
+        const timeB = new Date(b.groupScrapedAt || b.timestamp || b.rawTimestamp || 0).getTime();
+        return timeB - timeA;
+      });
+    
+    setResults(formatted);
+    setShowResults(true);
   };
 
   const handleExport = () => {
@@ -250,16 +420,6 @@ export default function DistributorFinderDashboard() {
       : 0
   }), [results]);
 
-  // 🔹 สถานะโหลดข้อมูล
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen bg-blue-50">
-        <div className="animate-spin h-12 w-12 border-4 border-blue-600 border-t-transparent rounded-full mb-4"></div>
-        <p className="text-blue-800 font-medium">กำลังโหลดข้อมูลจาก API...</p>
-        <p className="text-blue-600 text-sm mt-2">กรุณารอสักครู่</p>
-      </div>
-    );
-  }
 
   // 🔹 แสดง error
   if (error) {
@@ -310,7 +470,7 @@ export default function DistributorFinderDashboard() {
             <h2 className="text-xl font-bold text-blue-900">ค้นหา</h2>
           </div>
 
-          {!loading && allResults.length > 0 && (
+          {allResults.length > 0 && (
             <div className="mb-6">
               <p className="text-sm text-green-600 bg-green-50 px-4 py-2 rounded-lg border border-green-200">
                 ✅ โหลดข้อมูลเสร็จสิ้น ({allResults.length} รายการ){latestScrapedAt ? ` · อัปเดตล่าสุด: ${formatDateTime(latestScrapedAt)}` : ''}
@@ -318,37 +478,83 @@ export default function DistributorFinderDashboard() {
             </div>
           )}
 
+
           <div className="flex flex-col gap-3 mb-4">
-            <div className="flex gap-4 items-center">
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="พิมพ์ข้อความที่นี่..."
-                className="flex-1 bg-blue-50 border-2 border-blue-200 text-blue-900 rounded-xl px-4 py-3"
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-              />
+            <div className="flex gap-4 items-center relative">
+              <div className="flex-1 relative">
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onFocus={handleInputFocus}
+                  onBlur={handleInputBlur}
+                  placeholder="พิมพ์ข้อความที่นี่..."
+                  className="w-full bg-blue-50 border-2 border-blue-200 text-blue-900 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                
+                {/* Auto Complete Suggestions */}
+                {showSuggestions && filteredSuggestions.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 bg-white border-2 border-blue-200 rounded-xl shadow-lg z-50 mt-1 max-h-60 overflow-y-auto">
+                    {filteredSuggestions.map((suggestion, index) => (
+                      <div
+                        key={suggestion}
+                        onClick={() => handleSuggestionClick(suggestion)}
+                        className={`px-4 py-3 cursor-pointer border-b border-gray-100 last:border-b-0 transition-colors ${
+                          index === selectedSuggestionIndex
+                            ? 'bg-blue-100 text-blue-900'
+                            : 'hover:bg-blue-50 text-blue-800'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <Search className="w-4 h-4 text-blue-500" />
+                          <span>{suggestion}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              
               <button
                 onClick={handleSearch}
-                className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-3 rounded-xl shadow-md hover:shadow-lg transition-all flex items-center space-x-2"
+                disabled={searchLoading}
+                className={`px-6 py-3 rounded-xl shadow-md transition-all flex items-center space-x-2 ${
+                  searchLoading 
+                    ? 'bg-gray-400 cursor-not-allowed' 
+                    : 'bg-gradient-to-r from-blue-600 to-blue-700 hover:shadow-lg'
+                } text-white`}
               >
-                <Search className="w-4 h-4" />
-                <span>ค้นหา</span>
+                {searchLoading ? (
+                  <>
+                    <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+                    <span>กำลังส่ง...</span>
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-4 h-4" />
+                    <span>ค้นหา</span>
+                  </>
+                )}
               </button>
             </div>
+            
+            {/* Category Filter */}
             <div className="flex gap-3 items-center">
-              <label className="text-blue-800 text-sm">ประวัติการค้นหา:</label>
+              <label className="text-blue-800 text-sm font-medium">กรองตามหมวดหมู่:</label>
               <select
-                className="bg-blue-50 border-2 border-blue-200 text-blue-900 rounded-xl px-3 py-2 min-w-[240px]"
-                value={savedQueries.includes(searchTerm) ? searchTerm : ''}
-                onChange={handleSelectSaved}
+                value={selectedCategory}
+                onChange={handleCategoryChange}
+                className="bg-blue-50 border-2 border-blue-200 text-blue-900 rounded-xl px-3 py-2 min-w-[200px] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
-                <option value="">— เลือกคำค้นที่บันทึกไว้ —</option>
-                {savedQueries.map((q) => (
-                  <option key={q} value={q}>{q}</option>
+                {CATEGORY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
                 ))}
               </select>
             </div>
+            
           </div>
         </div>
 
@@ -360,6 +566,11 @@ export default function DistributorFinderDashboard() {
               {searchTerm && (
                 <span className="text-lg font-normal text-blue-600 ml-2">
                   (ค้นหา: "{searchTerm}")
+                </span>
+              )}
+              {selectedCategory && (
+                <span className="text-lg font-normal text-green-600 ml-2">
+                  (หมวดหมู่: "{CATEGORY_OPTIONS.find(opt => opt.value === selectedCategory)?.label}")
                 </span>
               )}
             </h3>
@@ -384,20 +595,44 @@ export default function DistributorFinderDashboard() {
                 <div key={result.id} className="bg-white rounded-2xl p-6 mb-6 border-2 border-blue-200 shadow-md">
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="font-bold text-lg text-blue-900">{result.author}</h4>
-                    <a href={result.postLink} target="_blank" rel="noreferrer" className="text-blue-600 font-medium flex items-center">
-                      <ExternalLink className="w-4 h-4 mr-1" /> ดูโพสต์
-                    </a>
+                    <div className="flex items-center space-x-3">
+                      {result.authorProfileLink && (
+                        <a 
+                          href={result.authorProfileLink} 
+                          target="_blank" 
+                          rel="noreferrer" 
+                          className="text-green-600 font-medium flex items-center hover:text-green-700 transition-colors"
+                        >
+                          <User className="w-4 h-4 mr-1" /> โปรไฟล์
+                        </a>
+                      )}
+                      <a 
+                        href={result.postLink} 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        className="text-blue-600 font-medium flex items-center hover:text-blue-700 transition-colors"
+                      >
+                        <ExternalLink className="w-4 h-4 mr-1" /> ดูโพสต์
+                      </a>
+                    </div>
                   </div>
                   <div className="text-xs text-blue-600 mb-3">
                     เวลาอัปเดต: {formatDateTime(result.groupScrapedAt || result.timestamp || result.rawTimestamp)}
+                    {result.query && (
+                      <span className="ml-3 text-green-600">
+                        ค้นหา: "{result.query}"
+                      </span>
+                    )}
+                    {result.rootQuery && result.rootQuery !== result.query && (
+                      <span className="ml-3 text-purple-600">
+                        API: "{result.rootQuery}"
+                      </span>
+                    )}
                   </div>
                   <p className="text-blue-800 mb-4">{result.text}</p>
                   {result.imageUrl && (
                     <img src={result.imageUrl} alt="post" className="rounded-xl w-full max-h-80 object-cover border" />
                   )}
-                  <div className="text-sm text-blue-700 mt-4">
-                    👍 {result.engagement?.reactions ?? 0} · 💬 {result.engagement?.comments ?? 0}
-                  </div>
                 </div>
               ))
             )}
